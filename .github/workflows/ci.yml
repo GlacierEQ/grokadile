@@ -1,0 +1,93 @@
+name: Grokadile CI/CD
+
+on:
+  push:
+    branches: [main, dev, "integration/**"]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  lint-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install core deps
+        run: pip install -r requirements.txt
+
+      - name: Install integration + dev deps
+        run: pip install -r requirements-integrations.txt pytest ruff black
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Format check (black)
+        run: black --check .
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          MODEL_VERSION: ${{ github.sha }}
+
+  deploy-vercel:
+    name: Deploy to Vercel
+    needs: lint-test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Vercel (production)
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: --prod
+
+  sentry-release:
+    name: Sentry Release
+    needs: deploy-vercel
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: getsentry/action-release@v1
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: grokadile
+        with:
+          environment: production
+          version: ${{ github.sha }}
+
+  clickup-task:
+    name: ClickUp Deployment Task
+    needs: sentry-release
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Create ClickUp deployment task
+        run: |
+          curl -s -X POST "https://api.clickup.com/api/v2/list/${{ secrets.CLICKUP_LIST_ID }}/task" \
+            -H "Authorization: ${{ secrets.CLICKUP_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "name": "Deployed grokadile @ ${{ github.sha }}",
+              "description": "Automated deployment from GitHub Actions\nCommit: ${{ github.event.head_commit.message }}\nSHA: ${{ github.sha }}",
+              "status": "complete",
+              "tags": ["deployment", "automated"]
+            }'
