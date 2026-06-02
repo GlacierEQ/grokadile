@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/main.py",
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "50mb"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "api/main.py"
+    }
+  ],
+  "env": {
+    "CKPT_PATH": "./checkpoints/",
+    "TOKENIZER_PATH": "./tokenizer.model",
+    "WORLD_SIZE": "1",
+    "USE_DEEPSPEED": "0",
+    "MAX_LEN": "512",
+    "TEMPERATURE": "0.7"
+  }
+}
